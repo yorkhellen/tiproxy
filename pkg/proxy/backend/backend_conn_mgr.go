@@ -114,7 +114,7 @@ type BackendConnManager struct {
 	// signalReceived is used to notify the signal processing goroutine.
 	signalReceived chan signalType
 	authenticator  *Authenticator
-	cmdProcessor   *CmdProcessor
+	cmdEngine      CmdEngine
 	eventReceiver  unsafe.Pointer
 	config         *BCConfig
 	logger         *zap.Logger
@@ -151,7 +151,7 @@ func NewBackendConnManager(logger *zap.Logger, handshakeHandler HandshakeHandler
 		logger:           logger,
 		config:           config,
 		connectionID:     connectionID,
-		cmdProcessor:     NewCmdProcessor(logger.Named("cp")),
+		cmdEngine:        NewCmdProcessor(logger.Named("cp")),
 		handshakeHandler: handshakeHandler,
 		authenticator:    NewAuthenticator(config),
 		// There are 2 types of signals, which may be sent concurrently.
@@ -199,7 +199,7 @@ func (mgr *BackendConnManager) Connect(ctx context.Context, clientIO *pnet.Packe
 	addHandshakeMetrics(mgr.ServerAddr(), time.Duration(endTime-startTime))
 	mgr.updateTraffic(mgr.backendIO.Load())
 
-	mgr.cmdProcessor.capability = mgr.authenticator.capability
+	mgr.cmdEngine.setCapability(mgr.authenticator.capability)
 	childCtx, cancelFunc := context.WithCancel(ctx)
 	mgr.cancelFunc = cancelFunc
 	mgr.lastActiveTime = endTime
@@ -317,7 +317,7 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 	waitingRedirect := mgr.redirectInfo.Load() != nil
 	var holdRequest bool
 	backendIO := mgr.backendIO.Load()
-	holdRequest, err = mgr.cmdProcessor.executeCmd(request, mgr.clientIO, backendIO, waitingRedirect)
+	holdRequest, err = mgr.cmdEngine.executeCmd(request, mgr.clientIO, backendIO, waitingRedirect)
 	if !holdRequest {
 		addCmdMetrics(cmd, backendIO.RemoteAddr().String(), startTime)
 		mgr.updateTraffic(backendIO)
@@ -338,10 +338,10 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 			switch val {
 			case 0:
 				mgr.authenticator.capability |= pnet.ClientMultiStatements
-				mgr.cmdProcessor.capability |= pnet.ClientMultiStatements
+				mgr.cmdEngine.setCapability(mgr.cmdEngine.getCapability() | pnet.ClientMultiStatements)
 			case 1:
 				mgr.authenticator.capability &^= pnet.ClientMultiStatements
-				mgr.cmdProcessor.capability &^= pnet.ClientMultiStatements
+				mgr.cmdEngine.setCapability(mgr.cmdEngine.getCapability() &^ pnet.ClientMultiStatements)
 			default:
 				err = errors.Wrapf(mysql.ErrMalformPacket, "unrecognized set_option value:%d", val)
 				return
@@ -353,7 +353,7 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 		}
 	}
 	// Even if it meets an MySQL error, it may have changed the status, such as when executing multi-statements.
-	if mgr.cmdProcessor.finishedTxn() {
+	if mgr.cmdEngine.finishedTxn() {
 		if mgr.closeStatus.Load() == statusNotifyClose {
 			mgr.tryGracefulClose(ctx)
 		} else if waitingRedirect {
@@ -363,7 +363,7 @@ func (mgr *BackendConnManager) ExecuteCmd(ctx context.Context, request []byte) (
 	// Execute the held request no matter redirection succeeds or not.
 	if holdRequest && mgr.closeStatus.Load() < statusNotifyClose {
 		backendIO = mgr.backendIO.Load()
-		_, err = mgr.cmdProcessor.executeCmd(request, mgr.clientIO, backendIO, false)
+		_, err = mgr.cmdEngine.executeCmd(request, mgr.clientIO, backendIO, false)
 		addCmdMetrics(cmd, backendIO.RemoteAddr().String(), startTime)
 		mgr.updateTraffic(backendIO)
 		if err != nil && !pnet.IsMySQLError(err) {
@@ -400,14 +400,14 @@ func (mgr *BackendConnManager) initSessionStates(backendIO *pnet.PacketIO, sessi
 	sessionStates = strings.ReplaceAll(sessionStates, "\\", "\\\\")
 	sessionStates = strings.ReplaceAll(sessionStates, "'", "\\'")
 	sql := fmt.Sprintf(sqlSetState, sessionStates)
-	_, _, err := mgr.cmdProcessor.query(backendIO, sql)
+	_, _, err := mgr.cmdEngine.query(backendIO, sql)
 	return err
 }
 
 func (mgr *BackendConnManager) querySessionStates(backendIO *pnet.PacketIO) (sessionStates, sessionToken string, err error) {
 	// Do not lock here because the caller already locks.
 	var result *mysql.Resultset
-	if result, _, err = mgr.cmdProcessor.query(backendIO, sqlQueryState); err != nil {
+	if result, _, err = mgr.cmdEngine.query(backendIO, sqlQueryState); err != nil {
 		return
 	}
 	if sessionStates, err = result.GetStringByName(0, sessionStatesCol); err != nil {
@@ -463,7 +463,7 @@ func (mgr *BackendConnManager) tryRedirect(ctx context.Context) {
 	if backendInst == nil {
 		return
 	}
-	if !mgr.cmdProcessor.finishedTxn() {
+	if !mgr.cmdEngine.finishedTxn() {
 		return
 	}
 
@@ -594,7 +594,7 @@ func (mgr *BackendConnManager) tryGracefulClose(ctx context.Context) {
 	if mgr.closeStatus.Load() != statusNotifyClose || ctx.Err() != nil {
 		return
 	}
-	if !mgr.cmdProcessor.finishedTxn() {
+	if !mgr.cmdEngine.finishedTxn() {
 		return
 	}
 	mgr.quitSource = SrcProxyQuit

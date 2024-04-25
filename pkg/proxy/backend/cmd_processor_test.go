@@ -602,7 +602,7 @@ func TestPreparedStmts(t *testing.T) {
 	for _, test := range tests {
 		ts, clean := newTestSuite(t, tc)
 		c := func(t *testing.T, ts *testSuite) {
-			require.Equal(t, test.canRedirect, ts.mp.cmdProcessor.finishedTxn())
+			require.Equal(t, test.canRedirect, ts.mp.cmdEngine.finishedTxn())
 		}
 		ts.executeMultiCmd(t, test.cfgs, c)
 		clean()
@@ -701,7 +701,7 @@ func TestTxnStatus(t *testing.T) {
 	for _, test := range tests {
 		ts, clean := newTestSuite(t, tc)
 		c := func(t *testing.T, ts *testSuite) {
-			require.Equal(t, test.canRedirect, ts.mp.cmdProcessor.finishedTxn())
+			require.Equal(t, test.canRedirect, ts.mp.cmdEngine.finishedTxn())
 		}
 		ts.executeMultiCmd(t, test.cfgs, c)
 		clean()
@@ -813,7 +813,7 @@ func TestMixPrepAndTxnStatus(t *testing.T) {
 	for _, test := range tests {
 		ts, clean := newTestSuite(t, tc)
 		c := func(t *testing.T, ts *testSuite) {
-			require.Equal(t, test.canRedirect, ts.mp.cmdProcessor.finishedTxn())
+			require.Equal(t, test.canRedirect, ts.mp.cmdEngine.finishedTxn())
 		}
 		ts.executeMultiCmd(t, test.cfgs, c)
 		clean()

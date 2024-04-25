@@ -56,7 +56,7 @@ func newMockProxy(t *testing.T, cfg *proxyConfig) *mockProxy {
 		text:               text,
 		BackendConnManager: NewBackendConnManager(lg, cfg.handler, cfg.connectionID, cfg.bcConfig),
 	}
-	mp.cmdProcessor.capability = cfg.capability
+	mp.cmdEngine.setCapability(cfg.capability)
 	return mp
 }
 
@@ -67,7 +67,7 @@ func (mp *mockProxy) authenticateFirstTime(clientIO, backendIO *pnet.PacketIO) e
 		}, mp.frontendTLSConfig, mp.backendTLSConfig); err != nil {
 		return err
 	}
-	mp.cmdProcessor.capability = mp.authenticator.capability
+	mp.cmdEngine.setCapability(mp.authenticator.capability)
 	return nil
 }
 
@@ -81,18 +81,18 @@ func (mp *mockProxy) processCmd(clientIO, backendIO *pnet.PacketIO) error {
 	if err != nil {
 		return err
 	}
-	if mp.holdRequest, err = mp.cmdProcessor.executeCmd(request, clientIO, backendIO, mp.waitRedirect); err != nil {
+	if mp.holdRequest, err = mp.cmdEngine.executeCmd(request, clientIO, backendIO, mp.waitRedirect); err != nil {
 		return err
 	}
 	// Pretend to redirect the held request to the new backend. The backend must respond for another loop.
 	if mp.holdRequest {
-		_, err = mp.cmdProcessor.executeCmd(request, clientIO, backendIO, false)
+		_, err = mp.cmdEngine.executeCmd(request, clientIO, backendIO, false)
 	}
 	return err
 }
 
 func (mp *mockProxy) directQuery(_, backendIO *pnet.PacketIO) error {
-	rs, _, err := mp.cmdProcessor.query(backendIO, mockCmdStr)
+	rs, _, err := mp.cmdEngine.query(backendIO, mockCmdStr)
 	mp.rs = rs
 	return err
 }

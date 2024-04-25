@@ -41,6 +41,14 @@ func (cp *CmdProcessor) handleOKPacket(request, response []byte) uint16 {
 	return status
 }
 
+func (cp *CmdProcessor) getCapability() pnet.Capability {
+	return cp.capability
+}
+
+func (cp *CmdProcessor) setCapability(capability pnet.Capability) {
+	cp.capability = capability
+}
+
 func (cp *CmdProcessor) handleErrorPacket(data []byte) error {
 	return pnet.ParseErrorPacket(data)
 }
